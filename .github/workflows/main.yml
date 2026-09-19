@@ -1,9 +1,9 @@
-name: Serv00 保活
+name: Serv00 Keep Alive (Multi Account)
 
 on:
   schedule:
-    - cron: '0 3 1,16 * *'
-  workflow_dispatch:          
+    - cron: '0 3 1,16 * *'   # 每月1号和16号 UTC 3点（约每15天一次）
+  workflow_dispatch:
 
 jobs:
   keepalive:
@@ -23,10 +23,33 @@ jobs:
         env:
           HOST: ${{ secrets.SERV00_HOST }}
           USERS: ${{ secrets.SERV00_USERS }}
+          PUSH_URL: ${{ secrets.SHOWDOC_PUSH_URL }}
         run: |
+          FAILED=""
           IFS=',' read -ra USER_ARRAY <<< "$USERS"
           for USERNAME in "${USER_ARRAY[@]}"; do
             echo "==> Keepalive for $USERNAME@$HOST"
-            ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              "$USERNAME@$HOST" "echo KeepAlive Success" && echo "✅ $USERNAME OK" || echo "❌ $USERNAME FAILED"
+            if ssh -i ~/.ssh/id_ed25519 \
+                 -o StrictHostKeyChecking=no \
+                 -o UserKnownHostsFile=/dev/null \
+                 -o ConnectTimeout=15 \
+                 -o BatchMode=yes \
+                 "$USERNAME@$HOST" "echo KeepAlive Success" 2>&1; then
+              echo "✅ $USERNAME OK"
+            else
+              echo "❌ $USERNAME FAILED"
+              FAILED="${FAILED}${USERNAME} "
+            fi
           done
+
+          # 只有失败时才推送
+          if [ -n "$FAILED" ]; then
+            curl -s -X POST "$PUSH_URL" \
+              -d "title=Serv00 保活失败" \
+              -d "content=以下账号 SSH 保活失败：${FAILED}
+          Host: ${HOST}
+          时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" > /dev/null
+            echo "推送已发送，失败账号：$FAILED"
+          else
+            echo "全部账号保活成功，不发送推送。"
+          fi
